@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+import sys
+import math
+import pygame
+import random
+from pygame.locals import *
+
+# Basic settings for the display.
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 800
+CENTER_X = SCREEN_WIDTH // 2
+CENTER_Y = SCREEN_HEIGHT // 2
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED   = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE  = (0, 0, 255)
+GRAY  = (100, 100, 100)
+
+def draw_speedometer(surface, speed):
+    """
+    Draw a circular speedometer with a needle indicating current speed.
+    For demonstration, assume max speed is 120.
+    """
+    max_speed = 120
+    radius = 200
+    
+    # Speedometer circle
+    pygame.draw.circle(surface, GRAY, (CENTER_X, CENTER_Y), radius, 4)
+    
+    # Draw speed markers
+    for s in range(0, max_speed+1, 20):
+        angle = (s / max_speed) * 270 - 135  # 270-degree range, -135 to start from left
+        rad_angle = math.radians(angle)
+        outer_x = CENTER_X + radius * math.cos(rad_angle)
+        outer_y = CENTER_Y + radius * math.sin(rad_angle)
+        inner_x = CENTER_X + (radius - 20) * math.cos(rad_angle)
+        inner_y = CENTER_Y + (radius - 20) * math.sin(rad_angle)
+        pygame.draw.line(surface, WHITE, (inner_x, inner_y), (outer_x, outer_y), 2)
+        
+        # Text for every 20 speed step
+        font = pygame.font.Font(None, 24)
+        text_surface = font.render(str(s), True, WHITE)
+        text_rect = text_surface.get_rect(center=(inner_x, inner_y))
+        surface.blit(text_surface, text_rect)
+
+    # Speed needle
+    needle_angle = (speed / max_speed) * 270 - 135
+    needle_rad = math.radians(needle_angle)
+    needle_length = radius - 30
+    needle_x = CENTER_X + needle_length * math.cos(needle_rad)
+    needle_y = CENTER_Y + needle_length * math.sin(needle_rad)
+    pygame.draw.line(surface, RED, (CENTER_X, CENTER_Y), (needle_x, needle_y), 4)
+
+    # Speed text
+    font_large = pygame.font.Font(None, 72)
+    speed_text = font_large.render(f"{int(speed)} km/h", True, WHITE)
+    speed_rect = speed_text.get_rect(center=(CENTER_X, CENTER_Y + radius + 50))
+    surface.blit(speed_text, speed_rect)
+
+
+def draw_odometer(surface, distance):
+    """
+    Draw the odometer reading on the bottom of the screen.
+    """
+    font = pygame.font.Font(None, 48)
+    text_surface = font.render(f"Odometer: {distance:.1f} km", True, WHITE)
+    surface.blit(text_surface, (50, SCREEN_HEIGHT - 80))
+
+
+def draw_battery(surface, battery_level):
+    """
+    Draw a simple battery icon and percentage.
+    battery_level: 0.0 to 1.0 (0% to 100%)
+    """
+    x, y, width, height = 600, 50, 100, 40
+    # Outline
+    pygame.draw.rect(surface, WHITE, (x, y, width, height), 2)
+    # Positive terminal
+    pygame.draw.rect(surface, WHITE, (x + width, y + height//4, 6, height//2), 0)
+
+    # Fill 
+    fill_width = int((width - 4) * battery_level)
+    pygame.draw.rect(surface, GREEN if battery_level > 0.2 else RED,
+                     (x + 2, y + 2, fill_width, height - 4))
+
+    # Percentage text
+    font = pygame.font.Font(None, 36)
+    text_surface = font.render(f"{int(battery_level*100)}%", True, WHITE)
+    surface.blit(text_surface, (x - 60, y))
+
+
+def main():
+    pygame.init()
+    pygame.display.set_caption("EV Motorcycle Dashboard")
+
+    # Option 1: Fullscreen mode (recommended for a real dash)
+    # screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+    
+    # Option 2: Windowed mode (for testing)
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+
+    clock = pygame.time.Clock()
+
+    # Simulated data
+    speed = 0.0
+    odometer = 1234.5
+    battery_level = 0.75  # 75%
+
+    # For demonstration, speed will fluctuate randomly
+    speed_direction = 1  # 1=accelerate, -1=decelerate
+
+    running = True
+    while running:
+        # Event Handling
+        for event in pygame.event.get():
+            if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
+                running = False
+
+        # Update simulated data
+        # Randomly accelerate/decelerate
+        if speed >= 120:
+            speed_direction = -1
+        elif speed <= 0:
+            speed_direction = 1
+
+        speed += speed_direction * 0.5  # change speed
+        odometer += speed * (1/3600.0)  # approximate odometer increment (km) per frame
+
+        # Battery level random drain for demonstration
+        battery_level -= 0.0001  
+        if battery_level < 0:
+            battery_level = 1.0  # reset once it hits 0 for demonstration
+
+        # Clear screen
+        screen.fill(BLACK)
+
+        # Draw the components
+        draw_speedometer(screen, speed)
+        draw_odometer(screen, odometer)
+        draw_battery(screen, battery_level)
+
+        # Update display
+        pygame.display.flip()
+        clock.tick(30)  # 30 FPS
+
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
