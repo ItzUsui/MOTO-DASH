@@ -2,149 +2,328 @@
 import sys
 import math
 import pygame
-import random
 from pygame.locals import *
 
-# Basic settings for the display.
+# Screen resolution for an 800x800 or similar circular display
+# You may want 1280x720 if you're not restricted to a circle, but let's keep 800x800.
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 800
 CENTER_X = SCREEN_WIDTH // 2
 CENTER_Y = SCREEN_HEIGHT // 2
 
-# Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED   = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLUE  = (0, 0, 255)
-GRAY  = (100, 100, 100)
+# Colors (approximate based on S1000RR dash style)
+BLACK        = (0,   0,   0)
+WHITE        = (255, 255, 255)
+GRAY         = (40,  40,  40)
+GREEN        = (50,  255, 50)
+RED          = (255, 0,   0)
+YELLOW       = (255, 255, 0)
+ORANGE       = (255, 150, 0)
 
-def draw_speedometer(surface, speed):
+# Riding modes (just an example set)
+RIDING_MODES = ["RAIN", "ROAD", "DYNAMIC", "RACE"]
+
+################################################################################
+# ADVANCED TACH ARC
+################################################################################
+
+def draw_tach_arc(surface, rpm, max_rpm=16000):
     """
-    Draw a circular speedometer with a needle indicating current speed.
-    For demonstration, assume max speed is 120.
+    Draw a multi-segment arc from approx 140° to 400° (260° span),
+    representing 0..max_rpm. We'll color the last ~2000 RPM in orange/red
+    to mimic a redline zone. We'll also fill the arc in a gradient style:
+    green -> yellow -> red, or a simpler 2-3 color approach.
+    
+    We'll place it near the top, but large enough to replicate the S1000RR's dominating arc.
     """
-    max_speed = 120
-    radius = 200
+    # Angles:
+    # Let's define the tach arc from angle_start=140° to angle_end=400°
+    # That’s a 260° sweep. 0 RPM => angle=140°, max_rpm => angle=400°.
+    angle_start = 140
+    angle_end   = 400
+    angle_range = angle_end - angle_start
     
-    # Speedometer circle
-    pygame.draw.circle(surface, GRAY, (CENTER_X, CENTER_Y), radius, 4)
-    
-    # Draw speed markers
-    for s in range(0, max_speed+1, 20):
-        angle = (s / max_speed) * 270 - 135  # 270-degree range, -135 to start from left
-        rad_angle = math.radians(angle)
-        outer_x = CENTER_X + radius * math.cos(rad_angle)
-        outer_y = CENTER_Y + radius * math.sin(rad_angle)
-        inner_x = CENTER_X + (radius - 20) * math.cos(rad_angle)
-        inner_y = CENTER_Y + (radius - 20) * math.sin(rad_angle)
-        pygame.draw.line(surface, WHITE, (inner_x, inner_y), (outer_x, outer_y), 2)
+    # Current angle for our 'needle' or 'fill':
+    fraction = min(rpm / float(max_rpm), 1.0)
+    current_angle = angle_start + fraction * angle_range
+
+    # Outer radius
+    outer_r = 350
+    # Arc thickness
+    thickness = 50
+
+    # We'll break the arc into segments to color differently near the top range
+    # For instance:
+    #  - 0..12000 = normal color (white/gray or a slight gradient)
+    #  - 12000..14000 = transitional color (yellow/orange)
+    #  - 14000..16000 = redline
+    # We'll do it in 3 segments for a simplified approach.
+
+    # Segment 1: 0..12000 => angle 140..(140 + fraction*(12000/max_rpm)*angle_range)
+    # Segment 2: 12000..14000 => angle ...
+    # Segment 3: 14000..16000 => angle ...
+
+    seg1_rpm = 12000
+    seg2_rpm = 14000
+    # Convert each boundary to an angle
+    seg1_fraction = seg1_rpm / float(max_rpm)
+    seg1_angle = angle_start + seg1_fraction * angle_range  # up to around 140 + (0.75 * 260) = 335°, approx
+    seg2_fraction = seg2_rpm / float(max_rpm)
+    seg2_angle = angle_start + seg2_fraction * angle_range
+
+    # We'll define a small function to draw an arc from startA..endA in a color
+    def draw_arc_segment(a_start, a_end, color):
+        # Pygame arcs are drawn with angles in radians, from 0 at positive x-axis CCW
+        # We'll have to convert. We'll also do negative because we want clockwise from the top perspective.
+        rect = pygame.Rect(CENTER_X - outer_r, CENTER_Y - outer_r, outer_r*2, outer_r*2)
+        # Pygame draws arcs from a_start_rad to a_end_rad in CCW. 
+        # But our angles are conventional degrees from the top. We'll transform:
+        # 0° in pygame is +x-axis, and angles go CCW. 
+        # We'll define a function to convert our "dash angles" to pygame angles:
         
-        # Text for every 20 speed step
-        font = pygame.font.Font(None, 24)
-        text_surface = font.render(str(s), True, WHITE)
-        text_rect = text_surface.get_rect(center=(inner_x, inner_y))
-        surface.blit(text_surface, text_rect)
+        start_rad = math.radians(-a_start + 90)  # shift so that 0° is at top
+        end_rad   = math.radians(-a_end   + 90)
+        
+        # We want to ensure we pass the smaller rad first, so we'll swap if needed:
+        s, e = min(start_rad, end_rad), max(start_rad, end_rad)
+        pygame.draw.arc(surface, color, rect, s, e, thickness)
 
-    # Speed needle
-    needle_angle = (speed / max_speed) * 270 - 135
-    needle_rad = math.radians(needle_angle)
-    needle_length = radius - 30
-    needle_x = CENTER_X + needle_length * math.cos(needle_rad)
-    needle_y = CENTER_Y + needle_length * math.sin(needle_rad)
-    pygame.draw.line(surface, RED, (CENTER_X, CENTER_Y), (needle_x, needle_y), 4)
+    # Draw the full background arc in a dark gray
+    draw_arc_segment(angle_start, angle_end, GRAY)
 
-    # Speed text
-    font_large = pygame.font.Font(None, 72)
-    speed_text = font_large.render(f"{int(speed)} km/h", True, WHITE)
-    speed_rect = speed_text.get_rect(center=(CENTER_X, CENTER_Y + radius + 50))
-    surface.blit(speed_text, speed_rect)
+    # Now draw the partial arcs for each color zone up to current_angle
+    # We'll only draw a color if the 'current_angle' extends into that zone.
 
+    # Segment 1: 140..seg1_angle => color white or slightly greenish
+    if current_angle > angle_start:
+        end_angle_1 = min(current_angle, seg1_angle)
+        draw_arc_segment(angle_start, end_angle_1, WHITE)
 
-def draw_odometer(surface, distance):
+    # Segment 2: seg1_angle..seg2_angle => color e.g. YELLOW
+    if current_angle > seg1_angle:
+        start_2 = seg1_angle
+        end_2   = min(current_angle, seg2_angle)
+        draw_arc_segment(start_2, end_2, YELLOW)
+
+    # Segment 3: seg2_angle..400 => color e.g. ORANGE -> RED
+    if current_angle > seg2_angle:
+        start_3 = seg2_angle
+        end_3   = current_angle
+        draw_arc_segment(start_3, end_3, RED if rpm > seg2_rpm else ORANGE)
+
+################################################################################
+# SHIFT LIGHTS
+################################################################################
+
+def draw_shift_lights(surface, rpm, max_rpm=16000):
     """
-    Draw the odometer reading on the bottom of the screen.
+    A row of small "LED" squares/lights near the top (above the tach).
+    We'll light them up incrementally as RPM approaches redline.
+    For example, 5 lights: each lights at +20% intervals of the rev range.
+    At near max RPM, all are lit, possibly in red.
     """
-    font = pygame.font.Font(None, 48)
-    text_surface = font.render(f"Odometer: {distance:.1f} km", True, WHITE)
-    surface.blit(text_surface, (50, SCREEN_HEIGHT - 80))
+    # Let’s place them around y=40, x from 200..600 (just an example)
+    # We'll do 5 lights in a row. 
+    # The fraction of RPM for each light:
+    # Light1 => 0.6 of max, Light2 => 0.7, Light3 => 0.8, Light4 => 0.9, Light5 => 0.95
+    light_thresholds = [0.6, 0.7, 0.8, 0.9, 0.96]
+    # Each light's x position:
+    x_start = 220
+    spacing = 70
+    y_pos = 50
+    size = 30
 
+    fraction_rpm = rpm / float(max_rpm)
+    for i, threshold in enumerate(light_thresholds):
+        x_rect = x_start + i*spacing
+        rect = pygame.Rect(x_rect, y_pos, size, size)
+        # If fraction_rpm >= threshold, light is on, else off
+        if fraction_rpm >= threshold:
+            # Could color them differently for each threshold
+            if fraction_rpm > 0.9:
+                color = RED
+            else:
+                color = YELLOW
+            pygame.draw.rect(surface, color, rect)
+        else:
+            pygame.draw.rect(surface, GRAY, rect)
+        # White border around each LED
+        pygame.draw.rect(surface, WHITE, rect, 2)
 
-def draw_battery(surface, battery_level):
+################################################################################
+# SPEED DISPLAY
+################################################################################
+
+def draw_speed(surface, speed_kmh):
     """
-    Draw a simple battery icon and percentage.
-    battery_level: 0.0 to 1.0 (0% to 100%)
+    Large numeric speed in the center (like "120").
+    Usually S1000RR shows 3 digits in large text.
     """
-    x, y, width, height = 600, 50, 100, 40
-    # Outline
-    pygame.draw.rect(surface, WHITE, (x, y, width, height), 2)
-    # Positive terminal
-    pygame.draw.rect(surface, WHITE, (x + width, y + height//4, 6, height//2), 0)
+    # Position around center. The real dash places it slightly below center.
+    x = CENTER_X
+    y = CENTER_Y + 40
 
-    # Fill 
-    fill_width = int((width - 4) * battery_level)
-    pygame.draw.rect(surface, GREEN if battery_level > 0.2 else RED,
-                     (x + 2, y + 2, fill_width, height - 4))
+    try:
+        font_speed = pygame.font.Font("cool_font.ttf", 120)  # big custom font if you want
+    except:
+        font_speed = pygame.font.Font(None, 120)
 
-    # Percentage text
-    font = pygame.font.Font(None, 36)
-    text_surface = font.render(f"{int(battery_level*100)}%", True, WHITE)
-    surface.blit(text_surface, (x - 60, y))
+    speed_str = f"{int(speed_kmh)}"
+    surf = font_speed.render(speed_str, True, WHITE)
+    rect = surf.get_rect(center=(x, y))
+    surface.blit(surf, rect)
 
+    # Add "km/h" smaller, next to or below the speed
+    font_unit = pygame.font.Font(None, 40)
+    unit_surf = font_unit.render("km/h", True, WHITE)
+    unit_rect = unit_surf.get_rect(midtop=(x, rect.bottom - 10))
+    surface.blit(unit_surf, unit_rect)
+
+################################################################################
+# GEAR INDICATOR
+################################################################################
+
+def draw_gear_indicator(surface, gear):
+    """
+    A large gear indicator (e.g. '1', 'N', '4').
+    Typically near the left side or center-left. We'll place it upper-left area.
+    """
+    # Example position
+    x = CENTER_X - 200
+    y = CENTER_Y + 10
+
+    try:
+        font_gear = pygame.font.Font("cool_font.ttf", 100)
+    except:
+        font_gear = pygame.font.Font(None, 100)
+
+    gear_str = str(gear)
+    surf = font_gear.render(gear_str, True, WHITE)
+    rect = surf.get_rect(center=(x, y))
+    surface.blit(surf, rect)
+
+################################################################################
+# RIDING MODE DISPLAY
+################################################################################
+
+def draw_riding_mode(surface, mode_name):
+    """
+    A small box for the riding mode, e.g. "RACE", "ROAD", etc.
+    Often near the lower part of the dash.
+    """
+    # Example position at bottom-left
+    x = CENTER_X - 300
+    y = CENTER_Y + 220
+    w = 120
+    h = 40
+
+    rect = pygame.Rect(x, y, w, h)
+    pygame.draw.rect(surface, WHITE, rect, border_radius=8)
+    pygame.draw.rect(surface, BLACK, rect.inflate(-4, -4), 0, border_radius=6)
+
+    font_mode = pygame.font.Font(None, 36)
+    txt_surf = font_mode.render(mode_name, True, WHITE)
+    txt_rect = txt_surf.get_rect(center=rect.center)
+    surface.blit(txt_surf, txt_rect)
+
+################################################################################
+# SMALL INFO (Odometer, Battery, etc.)
+################################################################################
+
+def draw_small_info(surface, odometer_km, battery_v):
+    """
+    Display smaller info blocks. We'll place them near bottom-right.
+    """
+    # Odometer
+    odo_str = f"Odo: {odometer_km:.1f} km"
+    font_info = pygame.font.Font(None, 32)
+    odo_surf = font_info.render(odo_str, True, WHITE)
+    odo_rect = odo_surf.get_rect(bottomright=(SCREEN_WIDTH - 50, SCREEN_HEIGHT - 50))
+    surface.blit(odo_surf, odo_rect)
+
+    # Battery voltage
+    batt_str = f"{battery_v:.1f}V"
+    batt_surf = font_info.render(batt_str, True, WHITE)
+    batt_rect = batt_surf.get_rect(bottomright=(odo_rect.right, odo_rect.top - 10))
+    surface.blit(batt_surf, batt_rect)
+
+################################################################################
+# MAIN LOOP (Demo with Simulated Data)
+################################################################################
 
 def main():
     pygame.init()
-    pygame.display.set_caption("EV Motorcycle Dashboard")
+    pygame.display.set_caption("BMW S1000RR-Style Dash (Approx)")
 
-    # Option 1: Fullscreen mode (recommended for a real dash)
-    # screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
-    
-    # Option 2: Windowed mode (for testing)
+    # You might do FULLSCREEN, but let's do windowed for dev
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
     clock = pygame.time.Clock()
 
     # Simulated data
-    speed = 0.0
-    odometer = 1234.5
-    battery_level = 0.75  # 75%
+    rpm = 0.0
+    max_rpm = 16000
+    speed_kmh = 0.0
+    gear_list = ['N', '1', '2', '3', '4', '5', '6']
+    gear_index = 0
 
-    # For demonstration, speed will fluctuate randomly
-    speed_direction = 1  # 1=accelerate, -1=decelerate
+    riding_modes = RIDING_MODES
+    mode_index = 0
+
+    odometer = 12345.6
+    battery_v = 12.5
+
+    # We'll have the RPM accelerate & decelerate in a cycle
+    rpm_direction = 1  # 1 = up, -1 = down
 
     running = True
     while running:
-        # Event Handling
         for event in pygame.event.get():
             if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
                 running = False
 
         # Update simulated data
-        # Randomly accelerate/decelerate
-        if speed >= 120:
-            speed_direction = -1
-        elif speed <= 0:
-            speed_direction = 1
+        # 1) RPM up/down
+        if rpm >= max_rpm:
+            rpm_direction = -1
+        elif rpm <= 0:
+            rpm_direction = 1
+        rpm += rpm_direction * 200  # changes ~200 RPM per frame => ~6k rpm/sec at 30 fps
 
-        speed += speed_direction * 0.5  # change speed
-        odometer += speed * (1/3600.0)  # approximate odometer increment (km) per frame
+        # 2) Speed is approx 1/100 of rpm for demonstration
+        speed_kmh = rpm / 100.0
 
-        # Battery level random drain for demonstration
-        battery_level -= 0.0001  
-        if battery_level < 0:
-            battery_level = 1.0  # reset once it hits 0 for demonstration
+        # 3) Auto-rotate gear every few seconds
+        #    We'll do a simplistic approach: every time rpm crosses 0, pick next gear
+        if rpm < 10 and rpm_direction == 1:  
+            gear_index = (gear_index + 1) % len(gear_list)
+        gear_val = gear_list[gear_index]
+
+        # 4) Auto-cycle riding modes
+        #    Example: every 500 frames, switch mode
+        if pygame.time.get_ticks() % 5000 < 50:  # every ~5 seconds
+            mode_index = (mode_index + 1) % len(riding_modes)
+        current_mode = riding_modes[mode_index]
+
+        # 5) Odometer increment (rough)
+        odometer += speed_kmh / 3600.0
+
+        # 6) Battery small fluctuations
+        battery_v = 12.4 + 0.2 * math.sin(pygame.time.get_ticks()/1000.0)
 
         # Clear screen
         screen.fill(BLACK)
 
-        # Draw the components
-        draw_speedometer(screen, speed)
-        draw_odometer(screen, odometer)
-        draw_battery(screen, battery_level)
+        # Draw the advanced dash pieces
+        draw_tach_arc(screen, rpm, max_rpm)
+        draw_shift_lights(screen, rpm, max_rpm)
+        draw_speed(screen, speed_kmh)
+        draw_gear_indicator(screen, gear_val)
+        draw_riding_mode(screen, current_mode)
+        draw_small_info(screen, odometer, battery_v)
 
-        # Update display
         pygame.display.flip()
-        clock.tick(30)  # 30 FPS
+        clock.tick(30)  # ~30 FPS
 
     pygame.quit()
     sys.exit()
