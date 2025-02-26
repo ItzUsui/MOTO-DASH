@@ -1,4 +1,4 @@
-  #!/usr/bin/env python3
+#!/usr/bin/env python3
 import sys
 import math
 import pygame
@@ -11,10 +11,13 @@ SCREEN_HEIGHT = 1080
 CENTER_X = SCREEN_WIDTH // 2
 CENTER_Y = SCREEN_HEIGHT // 2
 
-RADIUS   = 540  # Outer circumference
+# Outermost radius of the circular screen
+SCREEN_RADIUS = 540
 
-# We'll assume a top speed of 200 mph
+# Speed range
 MAX_SPEED = 200.0
+# RPM range
+MAX_RPM   = 13000.0
 
 # Colors
 BLACK   = (0,   0,   0)
@@ -22,19 +25,15 @@ WHITE   = (255, 255, 255)
 GREEN   = (0,   200, 0)
 YELLOW  = (255, 220, 0)
 RED     = (255, 0,   0)
-GRAY    = (60,  60,  60)
 
-###############################################################################
-# Anti-Aliased Arc Polygon Drawing
-###############################################################################
+################################################################################
+# Anti-Aliased Arc Polygon Helpers
+################################################################################
 
 def build_arc_polygon(angle_start_deg, angle_end_deg, outer_radius, thickness, steps=360):
     """
-    Builds a list of (x,y) points forming a polygon for an arc from angle_start_deg
-    to angle_end_deg with a given outer_radius and thickness. 
-    0° = top, angles increase clockwise for a "dashboard" style.
-
-    We'll produce a "ring segment" shape, used with gfxdraw for anti-aliased arcs.
+    Build a list of points forming a polygon for an arc from angle_start_deg..angle_end_deg
+    (in "dashboard" angle system: 0°=top, angles increase clockwise).
     """
     pts = []
     step_size = (angle_end_deg - angle_start_deg) / steps
@@ -42,7 +41,7 @@ def build_arc_polygon(angle_start_deg, angle_end_deg, outer_radius, thickness, s
     # Outer boundary
     for i in range(steps+1):
         a_deg = angle_start_deg + i * step_size
-        rads = math.radians(-a_deg + 90)  # convert dash-angle → Pygame angle
+        rads  = math.radians(-a_deg + 90)
         x_out = CENTER_X + outer_radius * math.cos(rads)
         y_out = CENTER_Y - outer_radius * math.sin(rads)
         pts.append((x_out, y_out))
@@ -51,7 +50,7 @@ def build_arc_polygon(angle_start_deg, angle_end_deg, outer_radius, thickness, s
     inner_radius = outer_radius - thickness
     for i in range(steps+1):
         a_deg = angle_end_deg - i * step_size
-        rads = math.radians(-a_deg + 90)
+        rads  = math.radians(-a_deg + 90)
         x_in = CENTER_X + inner_radius * math.cos(rads)
         y_in = CENTER_Y - inner_radius * math.sin(rads)
         pts.append((x_in, y_in))
@@ -59,19 +58,12 @@ def build_arc_polygon(angle_start_deg, angle_end_deg, outer_radius, thickness, s
     return pts
 
 def draw_arc_polygon_aa(surface, arc_pts, color):
-    """
-    Draw the arc polygon with anti-aliasing:
-      1) filled_polygon for the interior
-      2) aapolygon for a smooth anti-aliased boundary
-    """
+    """Draw an arc polygon with anti-aliasing via gfxdraw."""
     pygame.gfxdraw.filled_polygon(surface, arc_pts, color)
     pygame.gfxdraw.aapolygon(surface, arc_pts, color)
 
 def draw_arc_segment_aa(surface, a_start, a_end, outer_radius, thickness, color, overlap_deg=0.0):
-    """
-    Build the arc polygon from a_start..a_end (in dash angles), then draw it
-    with anti-aliasing. overlap_deg can slightly expand each boundary to hide any gaps.
-    """
+    """Build & draw an anti-aliased arc polygon from a_start..a_end."""
     if a_end < a_start:
         a_start, a_end = a_end, a_start
 
@@ -82,88 +74,64 @@ def draw_arc_segment_aa(surface, a_start, a_end, outer_radius, thickness, color,
                                 steps=360)
     draw_arc_polygon_aa(surface, arc_pts, color)
 
-###############################################################################
-# Anti-Aliased "aaline" for Ticks
-###############################################################################
+################################################################################
+# SPEED BAR (Thicker)
+################################################################################
 
-def draw_line_aa(surface, color, start_pos, end_pos):
+def draw_speed_bar(surface, speed):
     """
-    Draw a single-pixel anti-aliased line (pygame.draw.aaline).
-    This provides better quality than draw.line for thickness=1.
-    """
-    pygame.draw.aaline(surface, color, start_pos, end_pos)
-
-###############################################################################
-# Main Speedometer Arc
-###############################################################################
-
-def draw_speedometer(surface, speed):
-    """
-    Speedometer arc from 150°..390° (240° sweep). White border, black track,
-    color fill (green->yellow->red). Ticks from outer border (540) to inner=460
-    with anti-aliased lines and numeric labels.
+    Speedometer bar from angles 150..390, now "bigger" by using thickness=120.
+    Outer radius=540 => inner radius=420. Single color fill (white).
     """
     angle_start = 150
     angle_end   = 390
-    angle_range = angle_end - angle_start
+    overlap_deg = 0.2
+    bar_thickness = 120  # bigger thickness => 540..420
 
-    bar_thickness = 80
-    overlap_deg   = 0.2
-
-    # 1) White outer border
-    border_thickness = 10
+    # 1) Outer white border ring
+    border_t = 10
     draw_arc_segment_aa(surface, angle_start, angle_end,
-                        RADIUS, border_thickness, WHITE)
+                        SCREEN_RADIUS, border_t, WHITE)
 
-    # 2) Black track
-    track_outer = RADIUS - border_thickness  # 530
-    track_thick = bar_thickness - border_thickness  # 70
-    if track_thick < 0: 
+    # 2) Black track behind
+    track_outer = SCREEN_RADIUS - border_t  # e.g. 530
+    track_thick = bar_thickness - border_t  # e.g. 110
+    if track_thick < 0:
         track_thick = 0
     draw_arc_segment_aa(surface, angle_start, angle_end,
                         track_outer, track_thick, BLACK)
 
-    # 3) Color fill (green->yellow->red)
-    frac       = min(max(speed / MAX_SPEED, 0.0), 1.0)
-    fill_angle = angle_start + frac * angle_range
+    # 3) Fill fraction in white
+    total_arc = angle_end - angle_start
+    frac = min(max(speed / MAX_SPEED, 0.0), 1.0)
+    fill_angle = angle_start + frac*total_arc
 
-    green_frac   = 0.5
-    yellow_frac  = 0.8
-    green_angle  = angle_start + green_frac  * angle_range
-    yellow_angle = angle_start + yellow_frac * angle_range
+    draw_arc_segment_aa(surface, angle_start, fill_angle,
+                        track_outer, track_thick, WHITE, overlap_deg)
 
-    fill_outer = track_outer
-    fill_thick = track_thick
+    # 4) Ticks
+    draw_speed_ticks(surface, angle_start, angle_end, SCREEN_RADIUS, bar_thickness,
+                     major_step=20, minor_step=10, max_speed=MAX_SPEED, color=WHITE)
 
-    # (a) Green
-    if fill_angle > angle_start:
-        end_a = min(fill_angle, green_angle)
-        draw_arc_segment_aa(surface, angle_start, end_a, fill_outer, fill_thick, GREEN, overlap_deg)
-    # (b) Yellow
-    if fill_angle > green_angle:
-        end_a = min(fill_angle, yellow_angle)
-        draw_arc_segment_aa(surface, green_angle, end_a, fill_outer, fill_thick, YELLOW, overlap_deg)
-    # (c) Red
-    if fill_angle > yellow_angle:
-        draw_arc_segment_aa(surface, yellow_angle, fill_angle, fill_outer, fill_thick, RED, overlap_deg)
+################################################################################
+# Speed Ticks (Anti-Aliased Lines)
+################################################################################
 
-    # 4) Ticks (anti-aliased lines)
-    draw_speed_ticks(surface, angle_start, angle_end,
-                     RADIUS, bar_thickness,
-                     major_step=20, minor_step=10, 
-                     max_speed=MAX_SPEED, color=WHITE)
+def draw_line_aa(surface, color, start_pos, end_pos):
+    """Draw a single-pixel anti-aliased line."""
+    pygame.draw.aaline(surface, color, start_pos, end_pos)
 
 def draw_speed_ticks(surface, angle_start, angle_end, outer_r, bar_thickness,
                      major_step=20, minor_step=10, max_speed=200, color=WHITE):
     """
-    Ticks from outer_r=540 -> inner=460, major ticks every 20 mph w/ numeric labels,
-    minor ticks every 10 mph, drawn with anti-aliased lines (aaline).
+    Ticks from outer_r=540 to inner_r=420 (since thickness=120).
+    We'll place major ticks every 20 mph with numeric labels, minor ticks every 10 mph unlabeled.
     """
     angle_range = angle_end - angle_start
-    bar_inner   = outer_r - bar_thickness  # 460
-    label_r     = bar_inner - 15           # ~445
+    bar_inner   = outer_r - bar_thickness  # e.g. 540 - 120 = 420
+    label_r     = bar_inner - 15          # e.g. 405
 
-    font_label  = pygame.font.Font(None, 36)
+    font_lbl = pygame.font.Font(None, 36)
 
     def speed_to_angle(spd):
         return angle_start + (spd/max_speed)*angle_range
@@ -173,24 +141,19 @@ def draw_speed_ticks(surface, angle_start, angle_end, outer_r, bar_thickness,
         a_deg = speed_to_angle(spd)
         rads  = math.radians(-a_deg + 90)
 
-        # major or minor
-        if (abs(spd % major_step) < 0.0001) or (abs(spd - max_speed) < 0.001):
-            do_label   = True
-        else:
-            do_label   = False
+        # major tick if multiple of major_step or near max_speed
+        do_label = (abs(spd % major_step) < 0.0001) or (abs(spd - max_speed) < 0.001)
 
-        x_out = CENTER_X + outer_r  * math.cos(rads)
-        y_out = CENTER_Y - outer_r  * math.sin(rads)
-        x_in  = CENTER_X + bar_inner* math.cos(rads)
-        y_in  = CENTER_Y - bar_inner* math.sin(rads)
+        x_out = CENTER_X + outer_r   * math.cos(rads)
+        y_out = CENTER_Y - outer_r   * math.sin(rads)
+        x_in  = CENTER_X + bar_inner * math.cos(rads)
+        y_in  = CENTER_Y - bar_inner * math.sin(rads)
 
-        # Anti-aliased line, thickness=1 for best quality
         draw_line_aa(surface, color, (x_out, y_out), (x_in, y_in))
 
-        # If major => label
         if do_label:
             lbl_str  = str(int(spd))
-            lbl_surf = font_label.render(lbl_str, True, color)
+            lbl_surf = font_lbl.render(lbl_str, True, color)
             lx = CENTER_X + label_r * math.cos(rads)
             ly = CENTER_Y - label_r * math.sin(rads)
             lbl_rect = lbl_surf.get_rect(center=(lx, ly))
@@ -198,52 +161,85 @@ def draw_speed_ticks(surface, angle_start, angle_end, outer_r, bar_thickness,
 
         spd += minor_step
 
-###############################################################################
-# Battery Arc on the Right
-###############################################################################
+################################################################################
+# RPM BAR (Thin Arc Hugging the Outer Edge)
+################################################################################
+
+def draw_rpm_bar(surface, rpm):
+    """
+    An RPM bar hugging the speed bar's *outer radius* = 540.
+    We'll define thickness=20, so it spans 540..520.
+    Angles also 150..390. Color transitions green->yellow->red.
+    """
+    angle_start = 150
+    angle_end   = 390
+    overlap_deg = 0.2
+    bar_thickness = 20  # thin ring around the outer edge
+
+    # 1) White border ring
+    border_t = 5
+    draw_arc_segment_aa(surface, angle_start, angle_end,
+                        SCREEN_RADIUS, border_t, WHITE)
+
+    # 2) Black track
+    track_outer = SCREEN_RADIUS - border_t  # e.g. 535
+    track_thick = bar_thickness - border_t  # e.g. 15
+    if track_thick < 0:
+        track_thick = 0
+    draw_arc_segment_aa(surface, angle_start, angle_end,
+                        track_outer, track_thick, BLACK)
+
+    # 3) Color fill (green->yellow->red as rpm fraction)
+    arc_range = angle_end - angle_start
+    frac = min(max(rpm / MAX_RPM, 0.0), 1.0)
+    fill_angle = angle_start + arc_range*frac
+
+    # thresholds, e.g. 60% => green->yellow, 90% => yellow->red
+    green_thr  = angle_start + 0.60*arc_range
+    yellow_thr = angle_start + 0.90*arc_range
+
+    if fill_angle > angle_start:
+        end_a = min(fill_angle, green_thr)
+        draw_arc_segment_aa(surface, angle_start, end_a, track_outer, track_thick, GREEN, overlap_deg)
+    if fill_angle > green_thr:
+        end_a = min(fill_angle, yellow_thr)
+        draw_arc_segment_aa(surface, green_thr, end_a, track_outer, track_thick, YELLOW, overlap_deg)
+    if fill_angle > yellow_thr:
+        draw_arc_segment_aa(surface, yellow_thr, fill_angle, track_outer, track_thick, RED, overlap_deg)
+
+################################################################################
+# Battery Bar (Right)
+################################################################################
 
 def draw_battery_bar(surface, battery_level):
-    """
-    A smaller arc (thickness=40) on the right side (60°..120°).
-    White border, black track, fill color (green or red).
-    We'll place the label "BAT XX%" *outside* the arc, just beyond radius=540.
-    """
     angle_start = 60
     angle_end   = 120
     overlap     = 0.2
-    bar_thickness = 40
+    bar_thick   = 40
 
-    # 1) White outer border
-    border_thick = 5
-    draw_arc_segment_aa(surface, angle_start, angle_end, RADIUS, border_thick, WHITE)
+    # White border
+    border_t = 5
+    draw_arc_segment_aa(surface, angle_start, angle_end, SCREEN_RADIUS, border_t, WHITE)
 
-    # 2) Black track
-    track_outer = RADIUS - border_thick
-    track_thick = bar_thickness - border_thick  # e.g. 35
-    if track_thick < 0: 
+    # Black track
+    track_outer = SCREEN_RADIUS - border_t
+    track_thick = bar_thick - border_t
+    if track_thick < 0:
         track_thick = 0
     draw_arc_segment_aa(surface, angle_start, angle_end, track_outer, track_thick, BLACK)
 
-    # 3) Fill fraction
+    # Fill
     frac = max(0.0, min(battery_level, 1.0))
-    fill_angle = angle_start + frac* (angle_end - angle_start)
-
+    fill_angle = angle_start + frac*(angle_end - angle_start)
     color_fill = GREEN if battery_level >= 0.2 else RED
     draw_arc_segment_aa(surface, angle_start, fill_angle, track_outer, track_thick, color_fill, overlap)
 
-    # 4) Label outside the bar
-    draw_battery_label_outside(surface, battery_level, angle_start, angle_end, RADIUS + 20)
-
+    # Label
+    draw_battery_label_outside(surface, battery_level, angle_start, angle_end, SCREEN_RADIUS + 20)
 
 def draw_battery_label_outside(surface, battery_level, angle_start, angle_end, label_radius):
-    """
-    Place "BAT XX%" around the midpoint angle, but *outside* the bar:
-      angle ~ (angle_start + angle_end)/2
-      radius ~ label_radius (e.g. 560 if the screen radius is 540).
-    """
     mid_angle = (angle_start + angle_end)/2.0
     rads = math.radians(-mid_angle + 90)
-
     x_lbl = CENTER_X + label_radius * math.cos(rads)
     y_lbl = CENTER_Y - label_radius * math.sin(rads)
 
@@ -254,34 +250,35 @@ def draw_battery_label_outside(surface, battery_level, angle_start, angle_end, l
     txt_rect = txt_surf.get_rect(center=(x_lbl, y_lbl))
     surface.blit(txt_surf, txt_rect)
 
-###############################################################################
+################################################################################
 # Odometer
-###############################################################################
+################################################################################
 
 def draw_odometer(surface, odometer_mi):
-    """Place the odometer text near the bottom, under the speed readout."""
     font_odo = pygame.font.Font(None, 24)
     txt = f"Odo: {odometer_mi:.1f}"
     surf = font_odo.render(txt, True, WHITE)
     rect = surf.get_rect(midtop=(CENTER_X, CENTER_Y + 200))
     surface.blit(surf, rect)
 
-###############################################################################
-# Main Loop
-###############################################################################
+################################################################################
+# MAIN
+################################################################################
 
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("1080p Round Dash - High Quality AA + Battery Label Outside")
+    pygame.display.set_caption("1080p Round Dash - Bigger Speed + Outer RPM Bar")
 
     clock = pygame.time.Clock()
 
     # Simulated data
-    speed = 0.0
-    speed_dir = 1
-    battery_level = 0.75
-    odometer_val = 1234.5
+    speed       = 0.0
+    speed_dir   = 1
+    rpm         = 0.0
+    rpm_dir     = 1
+    battery_lvl = 0.75
+    odometer    = 1234.5
 
     running = True
     while running:
@@ -289,55 +286,65 @@ def main():
             if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
                 running = False
 
-        # Update speed more slowly
+        # Speed updates
         if speed >= MAX_SPEED:
             speed_dir = -1
         elif speed <= 0:
             speed_dir = 1
-        speed += speed_dir * 0.5
+        speed += speed_dir * 0.5  # slower speed changes
+
+        # RPM updates
+        if rpm >= MAX_RPM:
+            rpm_dir = -1
+        elif rpm <= 0:
+            rpm_dir = 1
+        rpm += rpm_dir * 100
 
         # Odometer
-        odometer_val += speed / 3600.0
+        odometer += speed / 3600.0
 
-        # Battery drain (demo)
-        battery_level -= 0.0001
-        if battery_level < 0:
-            battery_level = 1.0
+        # Battery
+        battery_lvl -= 0.0001
+        if battery_lvl < 0:
+            battery_lvl = 1.0
 
-        # Clear background
         screen.fill(BLACK)
 
-        # 1) Speedometer
-        draw_speedometer(screen, speed)
+        # 1) "Bigger" speed bar (thickness=120)
+        draw_speed_bar(screen, speed)
 
-        # 2) Battery arc
-        draw_battery_bar(screen, battery_level)
+        # 2) Outer RPM bar hugging the speed bar's outer radius=540
+        draw_rpm_bar(screen, rpm)
 
-        # 3) Very large speed number
+        # 3) Battery bar on the right
+        draw_battery_bar(screen, battery_lvl)
+
+        # 4) Large speed number
         try:
             font_speed = pygame.font.Font(None, 160)
         except:
             font_speed = pygame.font.Font(None, 160)
 
-        spd_str = f"{int(speed)}"
+        spd_str  = f"{int(speed)}"
         surf_spd = font_speed.render(spd_str, True, WHITE)
         rect_spd = surf_spd.get_rect(center=(CENTER_X, CENTER_Y+20))
         screen.blit(surf_spd, rect_spd)
 
         # mph label
         font_unit = pygame.font.Font(None, 36)
-        unit_surf = font_unit.render("mph", True, WHITE)
-        unit_rect = unit_surf.get_rect(midtop=(rect_spd.centerx, rect_spd.bottom - 5))
-        screen.blit(unit_surf, unit_rect)
+        mph_surf  = font_unit.render("mph", True, WHITE)
+        mph_rect  = mph_surf.get_rect(midtop=(rect_spd.centerx, rect_spd.bottom - 5))
+        screen.blit(mph_surf, mph_rect)
 
-        # 4) Odometer below speed
-        draw_odometer(screen, odometer_val)
+        # 5) Odometer
+        draw_odometer(screen, odometer)
 
         pygame.display.flip()
         clock.tick(30)
 
     pygame.quit()
     sys.exit()
+
 
 if __name__ == "__main__":
     main()
