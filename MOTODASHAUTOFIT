@@ -4,48 +4,47 @@ import math
 import pygame
 from pygame.locals import *
 
-# Constants for a 1080x1080 round screen
+# 1080×1080 round screen
 SCREEN_WIDTH  = 1080
 SCREEN_HEIGHT = 1080
-
 CENTER_X = SCREEN_WIDTH // 2
 CENTER_Y = SCREEN_HEIGHT // 2
-RADIUS   = 540  # Touching the circumference
 
-# We'll define a speed range, say 0..200 mph
+RADIUS   = 540  # Outer circumference
+
+# We'll assume a top speed of 200 mph for demonstration
 MAX_SPEED = 200.0
 
 # Colors
-BLACK  = (0, 0, 0)
-WHITE  = (255, 255, 255)
-GREEN  = (0, 200, 0)
-YELLOW = (255, 220, 0)
-RED    = (255, 0, 0)
-GRAY   = (60, 60, 60)
+BLACK   = (0,   0,   0)
+WHITE   = (255, 255, 255)
+GREEN   = (0,   200, 0)
+YELLOW  = (255, 220, 0)
+RED     = (255, 0,   0)
+GRAY    = (60,  60,  60)
 
-################################################################################
+###############################################################################
 # ARC / Polygon Helpers
-################################################################################
+###############################################################################
 
 def build_arc_polygon(angle_start_deg, angle_end_deg, outer_radius, thickness, steps=360):
     """
-    Returns a list of (x,y) points forming a polygon for an arc from angle_start_deg
-    to angle_end_deg, with 'outer_radius' and 'thickness'.
-    We assume a "dashboard angle system": 0° = top, angles increase clockwise.
-    'steps' for a smoother arc.
+    Returns a list of (x,y) points forming a polygon for an arc spanning angle_start_deg
+    to angle_end_deg, with an outer radius and 'thickness'. We use a "dashboard" angle
+    system: 0° at top, increasing clockwise.
     """
     pts = []
     step_size = (angle_end_deg - angle_start_deg) / steps
 
-    # Outer boundary (angle_start->angle_end)
+    # Outer boundary
     for i in range(steps+1):
         a_deg = angle_start_deg + i * step_size
-        rads = math.radians(-a_deg + 90)  # Convert dash-angle → Pygame angle
+        rads = math.radians(-a_deg + 90)  # convert to Pygame coords
         x_out = CENTER_X + outer_radius * math.cos(rads)
         y_out = CENTER_Y - outer_radius * math.sin(rads)
         pts.append((x_out, y_out))
 
-    # Inner boundary (angle_end->angle_start)
+    # Inner boundary
     inner_radius = outer_radius - thickness
     for i in range(steps+1):
         a_deg = angle_end_deg - i * step_size
@@ -56,15 +55,13 @@ def build_arc_polygon(angle_start_deg, angle_end_deg, outer_radius, thickness, s
 
     return pts
 
-
 def draw_arc_segment(surface, a_start, a_end, outer_radius, thickness, color, overlap_deg=0.0):
     """
-    Draw a single arc segment from a_start to a_end with a given thickness and color.
-    'overlap_deg' can slightly expand the arc to avoid visible gaps between segments.
+    Draw one arc segment from a_start to a_end, with given thickness/color.
+    overlap_deg can expand each side slightly to hide gaps between segments.
     """
     if a_end < a_start:
         a_start, a_end = a_end, a_start
-    # Expand each side by overlap_deg
     arc_pts = build_arc_polygon(a_start - overlap_deg,
                                 a_end   + overlap_deg,
                                 outer_radius,
@@ -72,153 +69,143 @@ def draw_arc_segment(surface, a_start, a_end, outer_radius, thickness, color, ov
                                 steps=360)
     pygame.draw.polygon(surface, color, arc_pts)
 
-################################################################################
-# Speedometer with Multiple Color Zones & White Border
-################################################################################
+###############################################################################
+# Speedometer
+###############################################################################
 
 def draw_speedometer(surface, speed):
     """
-    Draw a speedometer arc from e.g. 150° to 390° (240° range),
-    outer radius = 540 (touching screen edge),
-    thickness ~ 80. 
-    White border around it, then a black track, 
-    then segmented fill: Green(0..50%), Yellow(50..80%), Red(80..100%).
-    Ticks every 20 mph labeled, smaller ticks every 10 mph.
+    Speedometer arc from 150°..390° (240° sweep), radius=540 (touching screen edge).
+    White border, then black track, then segmented fill (green->yellow->red).
+    Ticks pass from outer border (540) to inner radius (460), with numeric labels
+    inside (just smaller than 460).
     """
 
     angle_start = 150
     angle_end   = 390
     angle_range = angle_end - angle_start
-    outer_r     = RADIUS  # 540
-    thickness   = 80
-    overlap     = 0.2     # small angle overlap
 
-    # 1) White outer border (like a thick ring behind everything)
-    border_thickness = 10  # how thick the white ring is
-    draw_arc_segment(surface, angle_start, angle_end,
+    # Outer radius & bar thickness
+    outer_r   = RADIUS       # 540
+    thickness = 80           # bar thickness
+    overlap   = 0.2          # small angle overlap
+
+    # 1) White outer border ring
+    border_thickness = 10
+    draw_arc_segment(surface, angle_start, angle_end, 
                      outer_r, border_thickness, WHITE)
 
-    # 2) The main black track arc (under the color fill)
-    track_pts_thickness = thickness - border_thickness
-    track_outer = outer_r - border_thickness
-    if track_pts_thickness < 0:
-        track_pts_thickness = 0
+    # 2) Main black track
+    track_outer = outer_r - border_thickness  # 540 - 10 = 530
+    track_thick = thickness - border_thickness  # e.g. 70
+    if track_thick < 0:
+        track_thick = 0
     draw_arc_segment(surface, angle_start, angle_end,
-                     track_outer, track_pts_thickness, BLACK)
+                     track_outer, track_thick, BLACK)
 
-    # 3) Fill color: break into 3 zones:
-    #    0..50% => green, 50..80 => yellow, 80..100 => red
-    frac = min(max(speed / MAX_SPEED, 0), 1.0)
+    # 3) Colored fill (green->yellow->red at fraction 0.5, 0.8, 1.0)
+    frac = min(max(speed / MAX_SPEED, 0.0), 1.0)
     fill_angle = angle_start + frac * angle_range
 
     green_frac = 0.5
-    yellow_frac = 0.8
-    green_angle = angle_start + green_frac * angle_range  # boundary for green->yellow
-    yellow_angle= angle_start + yellow_frac* angle_range  # boundary for yellow->red
+    yellow_frac= 0.8
+    green_angle = angle_start + green_frac * angle_range
+    yellow_angle= angle_start + yellow_frac* angle_range
 
-    # We'll define the arc outer radius & thickness for the fill
     fill_outer = track_outer
-    fill_thickness = track_pts_thickness
+    fill_thick = track_thick
 
-    # (a) Green zone 150..(green_angle)
-    # if fill_angle > angle_start
+    # green zone
     if fill_angle > angle_start:
         end_a = min(fill_angle, green_angle)
-        draw_arc_segment(surface, angle_start, end_a,
-                         fill_outer, fill_thickness, GREEN, overlap_deg=overlap)
-
-    # (b) Yellow zone green_angle..yellow_angle
+        draw_arc_segment(surface, angle_start, end_a, fill_outer, fill_thick, GREEN, overlap_deg=overlap)
+    # yellow
     if fill_angle > green_angle:
         end_a = min(fill_angle, yellow_angle)
-        draw_arc_segment(surface, green_angle, end_a,
-                         fill_outer, fill_thickness, YELLOW, overlap_deg=overlap)
-
-    # (c) Red zone yellow_angle..fill_angle
+        draw_arc_segment(surface, green_angle, end_a, fill_outer, fill_thick, YELLOW, overlap_deg=overlap)
+    # red
     if fill_angle > yellow_angle:
-        draw_arc_segment(surface, yellow_angle, fill_angle,
-                         fill_outer, fill_thickness, RED, overlap_deg=overlap)
+        draw_arc_segment(surface, yellow_angle, fill_angle, fill_outer, fill_thick, RED, overlap_deg=overlap)
 
-    # 4) Draw the speed ticks (white lines + labels outside the bar)
-    draw_speed_ticks(surface, angle_start, angle_end,
-                     outer_r, thickness, major_step=20, minor_step=10, max_speed=MAX_SPEED, speed_color=WHITE)
+    # 4) Ticks
+    draw_speed_ticks(
+        surface,
+        angle_start, angle_end,
+        outer_r, thickness,
+        major_step=20,
+        minor_step=10,
+        max_speed=MAX_SPEED,
+        color=WHITE
+    )
 
-def draw_speed_ticks(surface, angle_start, angle_end, outer_r, thickness,
-                     major_step=20, minor_step=10, max_speed=200, speed_color=WHITE):
+def draw_speed_ticks(surface, angle_start, angle_end, outer_r, bar_thickness,
+                     major_step=20, minor_step=10, max_speed=200, color=WHITE):
     """
-    Draw two sets of ticks:
-      - Minor ticks every 'minor_step' mph, no label
-      - Major ticks every 'major_step' mph, labeled
-    Ticks placed *outside* the speedometer bar so they're visible.
-    We'll place them at radius = (outer_r + 10) for lines, and labels further out.
+    Draws tick lines that start at outer_r (white border, 540) and go
+    through the bar to the bar's inner radius (outer_r - bar_thickness = 460).
+    The major ticks (every 20 mph) have numeric labels, placed just inside
+    the bar's inner radius (~ 445).
     """
+
     angle_range = angle_end - angle_start
-    # Outer radius of the bar is 'outer_r'. We'll put ticks slightly outside, e.g. outer_r+15
-    tick_radius = outer_r + 15
-    label_radius= outer_r + 40
+    # The bar’s inner radius = outer_r - bar_thickness
+    bar_inner = outer_r - bar_thickness  # e.g. 540 - 80 = 460
+
+    # We'll define the tick line from outer_r => bar_inner
+    # Then label around bar_inner - 15 => e.g. 445
+    label_radius = bar_inner - 15
 
     font_label = pygame.font.Font(None, 36)
 
-    # We assume speed goes 0..max_speed -> angle goes angle_start..angle_end
     def speed_to_angle(spd):
         frac = spd / float(max_speed)
-        return angle_start + frac*angle_range
+        return angle_start + frac * angle_range
 
-    # We'll do up to max_speed in increments:
-    # For each multiple of minor_step => small tick
-    # For each multiple of major_step => bigger tick + label
     spd = 0
     while spd <= max_speed + 0.1:
         a_deg = speed_to_angle(spd)
         rads  = math.radians(-a_deg + 90)
 
-        # We'll determine if it's a major or minor
-        if abs(spd % major_step) < 0.001 or abs(spd - max_speed) < 0.001:
-            # Major tick
-            line_len = 15
-            thick = 3
+        # major if it's divisible by major_step or near max_speed
+        if (abs(spd % major_step) < 0.0001) or (abs(spd - max_speed) < 0.001):
+            thick_line = 3
             do_label = True
         else:
-            # Minor tick
-            line_len = 8
-            thick = 2
+            thick_line = 2
             do_label = False
 
-        x_outer = CENTER_X + tick_radius * math.cos(rads)
-        y_outer = CENTER_Y - tick_radius * math.sin(rads)
-        x_inner = CENTER_X + (tick_radius - line_len) * math.cos(rads)
-        y_inner = CENTER_Y - (tick_radius - line_len) * math.sin(rads)
+        x_outer = CENTER_X + outer_r * math.cos(rads)    # 540
+        y_outer = CENTER_Y - outer_r * math.sin(rads)
+        x_inner = CENTER_X + bar_inner * math.cos(rads)  # 460
+        y_inner = CENTER_Y - bar_inner * math.sin(rads)
 
-        pygame.draw.line(surface, speed_color, (x_inner, y_inner), (x_outer, y_outer), thick)
+        # Draw the line
+        pygame.draw.line(surface, color, (x_outer, y_outer), (x_inner, y_inner), thick_line)
 
-        # If major tick => label
+        # If major => label
         if do_label:
-            label_str = str(int(spd))
-            label_surf = font_label.render(label_str, True, speed_color)
-            # Place it further out
-            lx = CENTER_X + label_radius * math.cos(rads)
+            speed_str = str(int(spd))
+            lbl_surf  = font_label.render(speed_str, True, color)
+            lx = CENTER_X + label_radius * math.cos(rads)   # e.g. 445
             ly = CENTER_Y - label_radius * math.sin(rads)
-            label_rect = label_surf.get_rect(center=(lx, ly))
-            surface.blit(label_surf, label_rect)
+            lbl_rect  = lbl_surf.get_rect(center=(lx, ly))
+            surface.blit(lbl_surf, lbl_rect)
 
         spd += minor_step
 
-################################################################################
-# Battery & Odometer (below the speed readout)
-################################################################################
+###############################################################################
+# Battery & Odometer
+###############################################################################
 
 def draw_battery_meter(surface, battery_level, x_center, y_top):
-    """
-    Draw a small battery meter with text "XX%".
-    battery_level in [0,1].
-    We'll place it at (x_center, y_top) with a small bar.
-    """
-    # Outline
+    """Small battery meter + XX% text."""
     w, h = 100, 20
     x = x_center - w//2
     y = y_top
 
+    # Outline
     outline_rect = pygame.Rect(x, y, w, h)
-    pygame.draw.rect(surface, WHITE, outline_rect, 2)  # white border
+    pygame.draw.rect(surface, WHITE, outline_rect, 2)
 
     # Fill
     fill_w = int((w-4) * battery_level)
@@ -226,7 +213,6 @@ def draw_battery_meter(surface, battery_level, x_center, y_top):
     color = GREEN if battery_level>0.2 else RED
     pygame.draw.rect(surface, color, fill_rect)
 
-    # Text (XX%)
     font_batt = pygame.font.Font(None, 24)
     pct = int(battery_level*100)
     txt_surf = font_batt.render(f"{pct}%", True, WHITE)
@@ -234,29 +220,27 @@ def draw_battery_meter(surface, battery_level, x_center, y_top):
     surface.blit(txt_surf, txt_rect)
 
 def draw_odometer(surface, odometer_mi, x_center, y_top):
-    """
-    Draw a small odometer text, e.g. "Odo: 1234.5"
-    """
+    """Simple 'Odo: XXX.x' below battery meter."""
     font_odo = pygame.font.Font(None, 24)
     txt = f"Odo: {odometer_mi:.1f}"
     surf = font_odo.render(txt, True, WHITE)
     rect = surf.get_rect(midtop=(x_center, y_top))
     surface.blit(surf, rect)
 
-################################################################################
-# Main Loop (Demo)
-################################################################################
+###############################################################################
+# Main Loop
+###############################################################################
 
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("1080p Round Dash")
+    pygame.display.set_caption("1080p Round Dash - Enhanced Ticks")
 
     clock = pygame.time.Clock()
 
     # Simulated data
     speed = 0.0
-    speed_dir = 1   # accelerate/decelerate
+    speed_dir = 1
     battery_level = 0.75
     odometer_val = 1234.5
 
@@ -266,44 +250,45 @@ def main():
             if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
                 running = False
 
-        # Update simulated speed
+        # Speed changes
         if speed >= MAX_SPEED:
             speed_dir = -1
         elif speed <= 0:
             speed_dir = 1
-        speed += speed_dir * 1.5
+        speed += speed_dir * 1.5  # accelerate or decelerate
 
-        # Odometer increment (approx)
+        # Odometer
         odometer_val += speed / 3600.0
 
-        # Battery drain example
+        # Battery drain
         battery_level -= 0.0002
         if battery_level < 0:
             battery_level = 1.0
 
-        # Clear background
+        # Clear
         screen.fill(BLACK)
 
-        # Draw the speedometer arc
+        # Draw speedometer arc
         draw_speedometer(screen, speed)
 
-        # Draw speed number in the center
+        # Bigger speed number (font=140), same position
         try:
-            font_speed = pygame.font.Font(None, 100)
+            font_speed = pygame.font.Font(None, 140)
         except:
-            font_speed = pygame.font.Font(None, 100)
+            font_speed = pygame.font.Font(None, 140)
+
         spd_str = f"{int(speed)}"
         surf_spd = font_speed.render(spd_str, True, WHITE)
         rect_spd = surf_spd.get_rect(center=(CENTER_X, CENTER_Y+20))
         screen.blit(surf_spd, rect_spd)
 
-        # "mph" just below
+        # mph label
         font_unit = pygame.font.Font(None, 36)
         unit_surf = font_unit.render("mph", True, WHITE)
-        unit_rect = unit_surf.get_rect(midtop=(rect_spd.centerx, rect_spd.bottom-5))
+        unit_rect = unit_surf.get_rect(midtop=(rect_spd.centerx, rect_spd.bottom - 5))
         screen.blit(unit_surf, unit_rect)
 
-        # Battery & odometer under speed
+        # Battery & Odometer below speed
         battery_y = unit_rect.bottom + 20
         draw_battery_meter(screen, battery_level, CENTER_X, battery_y)
         draw_odometer(screen, odometer_val, CENTER_X, battery_y + 30)
