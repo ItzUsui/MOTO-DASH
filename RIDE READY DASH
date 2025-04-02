@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Electric Motorcycle Dashboard</title>
+  <style>
+    /* Basic reset & layout */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000; /* fallback if gradient fails */
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: radial-gradient(circle, #222 0%, #111 80%, #000 100%);
+    }
+
+    /* Container for the dashboard */
+    #dashboard-container {
+      position: relative;
+      width: 520px;
+      height: 520px;
+    }
+
+    #dashboard {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="dashboard-container">
+    <canvas id="dashboard" width="520" height="520"></canvas>
+  </div>
+
+  <script>
+    /********************************************************
+     * GLOBALS & CONFIG
+     ********************************************************/
+    const canvas  = document.getElementById('dashboard');
+    const ctx     = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    /* Adjust these as needed for your UI/Design */
+    const outerRadius      = 200;  // Speedometer arc
+    const rpmRadius        = 170;  // RPM arc
+    const batteryArcRadius = 230;  // Battery gauge arc
+    const tempArcRadius    = 230;  // Temp gauge arc
+
+    /* The following values will be updated from real data */
+    let speed        = 0;         // current speed (MPH)
+    let maxSpeed     = 180;       // top speed
+    let rpm          = 0;         // current RPM
+    let maxRPM       = 16000;     // max RPM
+    let odometer     = 0;         // miles
+    let batteryLevel = 1.0;       // 100% by default
+    let batteryTemp  = 30;        // battery temperature (°C)
+    let motorTemp    = 45;        // motor temperature (°C)
+
+    /*
+      We'll visually place arcs from ~135° to ~405°,
+      "reversed" so 0 mph is on the RIGHT (~405°)
+      and maxSpeed is on the LEFT (~135°).
+    */
+    const startAngle = (135 * Math.PI) / 180;
+    const endAngle   = (405 * Math.PI) / 180;
+
+    /********************************************************
+     * HELPER FUNCTIONS
+     ********************************************************/
+
+    /* Clamp a value between a min and max range */
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(value, max));
+    }
+
+    /**
+     * valueToAngleReversed:
+     * Map [0..maxValue] -> [startAngle..endAngle], reversed so:
+     *    value=0 => endAngle,
+     *    value=maxValue => startAngle
+     */
+    function valueToAngleReversed(value, maxValue, startAng, endAng) {
+      const range    = endAng - startAng;
+      const fraction = Math.max(0, Math.min(value / maxValue, 1));
+      return endAng - range * fraction; // reversed direction
+    }
+
+    /* Draw an arc on the canvas */
+    function drawArc(cx, cy, r, startAng, endAng, color, lineWidth = 10, lineCap = 'butt') {
+      ctx.beginPath();
+      ctx.lineWidth   = lineWidth;
+      ctx.strokeStyle = color;
+      ctx.lineCap     = lineCap; // e.g. 'butt', 'round', 'square'
+      ctx.arc(cx, cy, r, startAng, endAng, false);
+      ctx.stroke();
+    }
+
+    /* Draw text centered at (x,y) */
+    function drawCenteredText(text, x, y, fontSize, color = '#fff') {
+      ctx.save();
+      ctx.font         = `${fontSize}px Arial`;
+      ctx.fillStyle    = color;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    }
+
+    /**
+     * Draw increments (ticks) for the speedometer up to "maxSpeed".
+     * Example: If maxSpeed=180 and you want 5 mph increments => 180/5=36 ticks
+     * We label every 20 mph (i.e., every 4th tick if increments=5).
+     *  - Also flips 60, 80, 100 labels vertically as previously requested.
+     */
+    function drawSpeedTicks(tickCount, maxVal, radius, color = '#666') {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 2;
+
+      for (let i = 0; i <= tickCount; i++) {
+        const tickValue = (maxVal / tickCount) * i; 
+        const angle = valueToAngleReversed(tickValue, maxVal, startAngle, endAngle);
+
+        const innerTick = radius - 10;
+        const outerTick = radius;
+
+        // Tick line
+        const x1 = centerX + innerTick * Math.cos(angle);
+        const y1 = centerY + innerTick * Math.sin(angle);
+        const x2 = centerX + outerTick * Math.cos(angle);
+        const y2 = centerY + outerTick * Math.sin(angle);
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Label major ticks every 4 => 20 mph
+        if (i % 4 === 0) {
+          ctx.save();
+          ctx.fillStyle = '#bbb';
+          ctx.font = '14px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+
+          const labelRadius = radius - 25;
+          const lx = centerX + labelRadius * Math.cos(angle);
+          const ly = centerY + labelRadius * Math.sin(angle);
+
+          // Move to label position
+          ctx.translate(lx, ly);
+
+          // Determine angle in degrees
+          let degAngle = (angle * 180) / Math.PI;
+          degAngle = (degAngle + 360) % 360; // normalize
+
+          // By default, rotate so baseline is tangent to the arc
+          let rotation = angle - Math.PI / 2;
+
+          // If the label is in the top half (roughly 90°..270°), flip it
+          if (degAngle > 90 && degAngle < 270) {
+            rotation += Math.PI;
+          }
+
+          // Special extra flip for 60, 80, 100
+          if (tickValue === 60 || tickValue === 80 || tickValue === 100) {
+            rotation += Math.PI;
+          }
+
+          ctx.rotate(rotation);
+          ctx.fillText(tickValue.toFixed(0), 0, 0);
+          ctx.restore();
+        }
+      }
+
+      ctx.restore();
+    }
+
+    /* Return an RPM color (green -> yellow -> red) */
+    function getRPMColor(rpmVal, maxVal) {
+      const fraction = rpmVal / maxVal;
+      if (fraction < 0.5)    return '#32cd32'; // green
+      else if (fraction < 0.8) return '#ffcc00'; // yellow
+      else                     return '#ff0000'; // red
+    }
+
+    /* Draw battery & temperature arcs */
+    /* Battery bar = TEAL (#00ffff) for distinction */
+    function drawBatteryAndTemp() {
+      // Battery angles: 225°..315° (top-left)
+      const batteryStart = (225 * Math.PI) / 180;
+      const batteryEnd   = (315 * Math.PI) / 180;
+
+      // Temperature angles: -45°..+45° (top-right)
+      const tempStart = (-45 * Math.PI) / 180;
+      const tempEnd   = (45 * Math.PI) / 180;
+
+      // Battery background arc
+      drawArc(centerX, centerY, batteryArcRadius, batteryStart, batteryEnd, '#333', 10, 'square');
+
+      // Battery fill arc
+      const clampedBattery = clamp(batteryLevel, 0, 1);
+      const batteryFillAngle = batteryStart + (batteryEnd - batteryStart) * clampedBattery;
+      drawArc(centerX, centerY, batteryArcRadius, batteryStart, batteryFillAngle, '#00ffff', 10, 'square');
+
+      // Temperature background arc
+      drawArc(centerX, centerY, tempArcRadius, tempStart, tempEnd, '#333', 10, 'square');
+
+      // Temperature fill arc
+      // We'll assume an average of the two temps is displayed
+      const avgTemp = (batteryTemp + motorTemp) / 2;
+      const tempFrac = clamp(avgTemp / 100, 0, 1);
+      const tempFillAngle = tempStart + (tempEnd - tempStart) * tempFrac;
+
+      let tempColor = '#32CD32'; // green
+      if (avgTemp > 70) tempColor = '#ffcc00'; // yellow
+      if (avgTemp > 90) tempColor = '#ff0000'; // red
+
+      drawArc(centerX, centerY, tempArcRadius, tempStart, tempFillAngle, tempColor, 10, 'square');
+    }
+
+    /********************************************************
+     * MAIN DRAW FUNCTION
+     ********************************************************/
+    function drawDashboard() {
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Background glow
+      ctx.save();
+      const bgGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 320);
+      bgGradient.addColorStop(0, '#555');
+      bgGradient.addColorStop(0.6, '#222');
+      bgGradient.addColorStop(1, '#000');
+      ctx.fillStyle = bgGradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      // Speedometer background arc
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = 'rgba(255,255,255,0.2)';
+      drawArc(centerX, centerY, outerRadius, startAngle, endAngle, '#333', 20, 'round');
+      ctx.restore();
+
+      // RPM background arc
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = 'rgba(255,255,255,0.2)';
+      drawArc(centerX, centerY, rpmRadius, startAngle, endAngle, '#222', 15, 'round');
+      ctx.restore();
+
+      // RPM fill arc
+      const rpmAngle = valueToAngleReversed(rpm, maxRPM, startAngle, endAngle);
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = 'rgba(255,255,255,0.3)';
+      drawArc(centerX, centerY, rpmRadius, rpmAngle, endAngle, getRPMColor(rpm, maxRPM), 15, 'round');
+      ctx.restore();
+
+      // Speed fill arc
+      const speedAngle = valueToAngleReversed(speed, maxSpeed, startAngle, endAngle);
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = 'rgba(255,255,255,0.3)';
+      drawArc(centerX, centerY, outerRadius, speedAngle, endAngle, '#ff6347', 20, 'round');
+      ctx.restore();
+
+      // Speed ticks: e.g. 180 / 5 = 36 ticks for 5 mph increments
+      drawSpeedTicks(36, maxSpeed, outerRadius);
+
+      // Center text for speed + odometer
+      drawCenteredText(`${speed.toFixed(0)}`, centerX, centerY - 10, 50, '#fff');
+      drawCenteredText('MPH', centerX, centerY + 25, 20, '#ccc');
+      drawCenteredText(`ODO: ${odometer.toFixed(1)}`, centerX, centerY + 50, 14, '#aaa');
+
+      // Battery & Temperature arcs on top
+      ctx.save();
+      ctx.shadowBlur = 0;
+      drawBatteryAndTemp();
+      ctx.restore();
+    }
+
+    /********************************************************
+     * API: UPDATE DASHBOARD DATA
+     ********************************************************/
+    /**
+     * Call this function whenever you receive new data
+     * from the motor controller, BMS, or other sensors.
+     *
+     * @param {number} newSpeed  - e.g. 0..180
+     * @param {number} newRPM    - e.g. 0..16000
+     * @param {number} newBatteryLevel - e.g. 0..1 (0..100%)
+     * @param {number} newBatteryTemp  - e.g. in °C
+     * @param {number} newMotorTemp    - e.g. in °C
+     * @param {number} newOdometer     - total miles
+     */
+    function updateDashboardData(newSpeed, newRPM, newBatteryLevel, newBatteryTemp, newMotorTemp, newOdometer) {
+      speed        = clamp(newSpeed, 0, maxSpeed);
+      rpm          = clamp(newRPM, 0, maxRPM);
+      batteryLevel = clamp(newBatteryLevel, 0, 1);
+      batteryTemp  = newBatteryTemp;
+      motorTemp    = newMotorTemp;
+      odometer     = Math.max(0, newOdometer);
+
+      // Redraw the dashboard with updated values
+      drawDashboard();
+    }
+
+    /********************************************************
+     * INITIAL DRAW (blank or default)
+     ********************************************************/
+    drawDashboard();
+
+    /*
+      In your real app, you might do something like:
+      setInterval(() => {
+        // Example: poll your motor controller & BMS, then call:
+        updateDashboardData(actualSpeed, actualRPM, batteryPercent, batTemp, motTemp, odomReading);
+      }, 100);
+
+      or handle an event-based callback from your hardware.
+    */
+  </script>
+</body>
+</html>
